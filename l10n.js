@@ -49,36 +49,67 @@ var
 	
 	return -1;
 }
-, request_JSON = function (uri) {
-	var req  = new XHR(),
-		data = {};
-	
-	// sadly, this has to be blocking to allow for a graceful degrading API
-	req.open("GET", uri, FALSE);
-	req.send(null);
-	
-	// Status codes can be inconsistent across browsers so we simply try to parse
-	// the response text and catch any errors. This deals with failed requests as
-	// well as malformed json files.
-	try {
-		data = JSON.parse(req.responseText);
-	} catch(e) {
-		// warn about error without stopping execution
-		setTimeout(function () {
-			// Error messages are not localized as not to cause an infinite loop
-			var l10n_err = new Error("Unable to load localization data: " + uri);
-			l10n_err.name = "Localization Error";
-			throw l10n_err;
-		}, 0);
-	}
+, request_JSON = async function (uri) {
+    let data = {};
+    try {
+        data = await loadFile(uri, 0, async (xhr, args) => await (xhr.json ? xhr.json() : JSON.parse(xhr.responseText)));
+    } catch(err) {
+        var req  = new XHR();
 
+        // sadly, this has to be blocking to allow for a graceful degrading API
+        req.open("GET", uri, FALSE);
+        req.send(null);
+
+        // Status codes can be inconsistent across browsers so we simply try to parse
+        // the response text and catch any errors. This deals with failed requests as
+        // well as malformed json files.
+        try {
+            data = JSON.parse(req.responseText);
+        } catch(e) {
+            // warn about error without stopping execution
+            setTimeout(function () {
+                // Error messages are not localized as not to cause an infinite loop
+                var l10n_err = new Error("Unable to load localization data: " + uri);
+                l10n_err.name = "Localization Error";
+                throw l10n_err;
+            }, 0);
+        }
+    }
 	return data;
 }
-, load = String_ctr[$to_locale_string] = function (data) {
+, loadFile = async function(url, timeout, callback) {
+    var args = Array.prototype.slice.call(arguments, 3);
+    if(typeof fetch !== undef_type){
+        return await fetch(url).then(res => {
+            if (res.status === 200) {
+                return callback(res, args);
+            } else {
+                console.error(res.statusText);
+            }
+        });
+    }
+    var xhr = new XHR();
+    xhr.ontimeout = function () {
+        console.error("The request for " + url + " timed out.");
+    };
+    xhr.onload = function() {
+        if (xhr.readyState === 4) {
+            if (xhr.status === 200) {
+                callback(xhr, args);
+            } else {
+                console.error(xhr.statusText);
+            }
+        }
+    };
+    xhr.open("GET", url, true);
+    xhr.timeout = timeout;
+    xhr.send(null);
+}
+, load = String_ctr[$to_locale_string] = async function (data) {
 	// don't handle function.toLocaleString(indentationAmount:Number)
 	if (arguments.length > 0 && typeof data !== "number") {
 		if (typeof data === string_type) {
-			load(request_JSON(data));
+			load(await request_JSON(data));
 		} else if (data === FALSE) {
 			// reset all localizations
 			localizations = {};
@@ -102,7 +133,7 @@ var
 					// URL specified
 					if (typeof localization === string_type) {
 						if (String_ctr[$locale][$to_lowercase]().indexOf(locale) === 0) {
-							localization = request_JSON(localization);
+							localization = await request_JSON(localization);
 						} else {
 							// queue loading locale if not needed
 							if (!(locale in load_queues)) {
@@ -125,7 +156,7 @@ var
 	// Return what function.toLocaleString() normally returns
 	return Function.prototype[$to_locale_string].apply(String_ctr, arguments);
 }
-, process_load_queue = function (locale) {
+, process_load_queue = async function (locale) {
 	var
 	  queue = load_queues[locale]
 	, i = 0
@@ -135,7 +166,7 @@ var
 	
 	for (; i < len; i++) {
 		localization = {};
-		localization[locale] = request_JSON(queue[i]);
+		localization[locale] = await request_JSON(queue[i]);
 		load(localization);
 	}
 	
@@ -192,7 +223,7 @@ if (typeof XMLHttpRequest === undef_type && typeof ActiveXObject !== undef_type)
 	
 		throw new Error("XMLHttpRequest not supported by this browser.");
 	};
-} else {
+} else if(typeof XMLHttpRequest !== undef_type) {
 	XHR = XMLHttpRequest;
 }
 
